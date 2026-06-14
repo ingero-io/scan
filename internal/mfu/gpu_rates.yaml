@@ -1,0 +1,33 @@
+# Hourly USD list price per GPU, by provider, used to turn the MFU gap
+# into a dollar estimate. These are PUBLIC LIST PRICES and an UPPER
+# BOUND on real exposure (spot, reserved, and committed-use discounts
+# are not modeled). The dollar output is labeled accordingly and
+# `--rate` overrides it with the operator's real contracted rate. GPU
+# keys match the nvidia-smi name; matching is by family token.
+currency_name: USD
+currency_symbol: "$"
+
+providers:
+  ec2: # reflects the 2025-06 AWS P5/P4 on-demand cut; verify against current pricing
+    "NVIDIA H100 80GB HBM3": 6.88 # p5.48xlarge $55.04/hr / 8
+    "NVIDIA A100-SXM4-80GB": 3.43
+    "NVIDIA A100-SXM4-40GB": 3.27
+    "NVIDIA L4 24GB": 0.85
+  gcp:
+    "NVIDIA H100 80GB HBM3": 11.06
+    "NVIDIA A100-SXM4-80GB": 4.12
+    "NVIDIA L4 24GB": 0.85
+  azure:
+    "NVIDIA H100 80GB HBM3": 12.29
+    "NVIDIA A100-SXM4-80GB": 3.40
+  lambda:
+    "NVIDIA H100 80GB HBM3": 2.49
+    "NVIDIA A100-SXM4-80GB": 1.29
+    "NVIDIA GH200 480GB": 2.29
+    "NVIDIA L40S": 1.29
+  coreweave:
+    "NVIDIA H100 80GB HBM3": 4.25
+    "NVIDIA A100-SXM4-80GB": 2.39
+    "NVIDIA L40S": 1.50
+
+fallback_rate: 0.0

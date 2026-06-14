@@ -1,0 +1,35 @@
+name: hygiene
+
+# Public-repo hygiene gate. Fails the build if a forbidden marker ever lands in
+# the tree: AI-tool attribution (the public record reads as human-authored), or
+# an em-dash (a strong machine-generated-text signal). Keep this green forever.
+on:
+  push:
+  pull_request:
+
+jobs:
+  scrub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No AI-tool attribution
+        run: |
+          # Attribution markers only. NOT model/protocol names like "OpenAI-compatible"
+          # or "GPT-4" - those are legitimate technical terms, not authorship claims.
+          pat='\b(Claude|Anthropic|Copilot|ChatGPT)\b|Co-Authored-By|🤖'
+          if grep -rInE "$pat" . \
+               --exclude-dir=.git --exclude-dir=.github \
+               --include='*.go' --include='*.md' --include='*.py' \
+               --include='*.sh' --include='*.yaml' --include='*.yml' \
+               --include='*.cast' --include='*.txt'; then
+            echo "::error::forbidden AI-tool attribution found above"; exit 1
+          fi
+          echo "clean: no AI-tool attribution"
+      - name: No em-dashes
+        run: |
+          if grep -rIn $'—' . \
+               --exclude-dir=.git --exclude-dir=.github \
+               --include='*.go' --include='*.md' --include='*.py' --include='*.sh'; then
+            echo "::error::em-dash (—) found above; use a regular dash"; exit 1
+          fi
+          echo "clean: no em-dashes"

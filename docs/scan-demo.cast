@@ -1,0 +1,7 @@
+{"version": 2, "width": 100, "height": 30, "timestamp": 1781450841, "env": {"SHELL": "/bin/bash", "TERM": "xterm"}, "title": "scan"}
+[0.005081, "o", "\r\n\u001b[1;36m# The GPU looks busy - nvidia-smi reports near-100% utilization:\u001b[0m\r\n"]
+[1.531009, "o", "NVIDIA A100-SXM4-40GB, 92 %, 35521 MiB\r\n"]
+[3.537852, "o", "\r\n\u001b[1;36m# But utilization is not useful work. scan measures the MFU gap:\u001b[0m\r\n"]
+[6.077141, "o", "sampling http://localhost:8001/metrics for 15s...\r\n"]
+[21.085471, "o", "GPU MFU scan (ESTIMATE - modeled, not measured)"]
+[21.085634, "o", "\r\n  workload : qwen2-7b on 1x NVIDIA A100-SXM4-40GB\r\n  output   : 891 tokens/sec  ->  12 of 312 TFLOP/s used\r\n  util     : 91%   (nvidia-smi GPU utilization - what the dashboard shows)\r\n  MFU      : 4.0%   (the real work behind that utilization)\r\n  headroom : ~11x below well-batched serving (~35-50% MFU, public benchmark)\r\n  cost     : ~$803/mo at $1.10/GPU/hr (--rate, upper bound)\r\n  envelope : up to ~$711-$739/mo of consolidation headroom (CEILING, not a promise)\r\n\r\n  Estimate: MFU is modeled (2 FLOPs/param/token, dense BF16 peak), not\r\n  measured. Pass --rate <usd/hr> for your real GPU cost.\r\n\r\n  The envelope is GROSS headroom (idle + stalled). The SLO-safe slice you\r\n  can actually reclaim - split from idle rightsizing, attributed to a cause,\r\n  and proven by a signed receipt - is what the Ingero agent measures. This\r\n  meter shows the gap; the agent recovers it.\r\n"]
