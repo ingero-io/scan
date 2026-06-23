@@ -135,6 +135,23 @@ scan --endpoint http://localhost:8000/metrics --model qwen2-7b
 `demo/` has a self-contained reproduction: a load generator plus the exact run
 behind the recording above.
 
+### Live board (continuous mode)
+
+By default `scan` takes one reading and exits. `--prometheus <addr>` keeps it
+running: it re-samples every `--interval` and serves a Prometheus exposition, so
+Prometheus and Grafana can graph the gap over time instead of printing it once.
+
+```
+scan --endpoint http://localhost:8000/metrics --model qwen2-7b --rate 1.10 \
+     --prometheus :9100
+curl localhost:9100/metrics
+```
+
+It publishes only the gap and the public envelope (util, MFU, achieved/peak
+TFLOP/s, tokens/sec, the monthly headroom bounds, and the public healthy band).
+`demo/board-compose.yaml` stands up Prometheus + Grafana with a ready board; see
+`demo/README.md`.
+
 ## Flags
 
 | Flag | Default | Meaning |
@@ -147,6 +164,7 @@ behind the recording above.
 | `--gpu-count` | detected | override the detected GPU count |
 | `--rate` | | your real USD/hr per GPU (overrides the bundled list price) |
 | `--interval` | `15s` | sampling window |
+| `--prometheus` | | serve a Prometheus `/metrics` exposition on this addr (e.g. `:9100`) and re-sample every `--interval`, instead of running once |
 
 ## Supported engines
 

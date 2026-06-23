@@ -155,9 +155,16 @@ type Estimate struct {
 // this range), used only to anchor the headroom envelope to something
 // defensible instead of to an unreachable 100% MFU. NOT a calibration and
 // encodes none of any SLO-aware sizing method.
+//
+// Exported so callers (the CLI report, the Prometheus exporter) can publish the
+// band itself. These are the same public 0.35 / 0.50 reference; the unexported
+// aliases below keep the existing internal call sites terse.
 const (
-	healthyServingMFULow  = 0.35
-	healthyServingMFUHigh = 0.50
+	HealthyServingMFULow  = 0.35
+	HealthyServingMFUHigh = 0.50
+
+	healthyServingMFULow  = HealthyServingMFULow
+	healthyServingMFUHigh = HealthyServingMFUHigh
 )
 
 // ResolvePeakTFLOPS returns the per-GPU dense BF16/FP16 peak for a GPU

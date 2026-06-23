@@ -44,6 +44,44 @@ a savings promise. How much is *safely* recoverable without breaking your SLO,
 which cause is responsible, and a signed before/after receipt: that is the Ingero
 agent, not this meter. `scan` shows the gap; the agent recovers it.
 
+## Live board (Prometheus + Grafana)
+
+`scan` also has a continuous mode. With `--prometheus <addr>` it re-samples every
+`--interval` and serves a Prometheus exposition instead of running once and exiting:
+
+```
+scan --endpoint http://localhost:8001/metrics --model qwen2-7b --rate 1.10 \
+     --prometheus :9100 --interval 15s
+curl localhost:9100/metrics
+```
+
+It exposes only the gap and the public ceiling envelope, labelled `{model,gpu}`:
+
+```
+scan_gpu_utilization            live nvidia-smi util, 0..1 (omitted if unreadable)
+scan_mfu                        modeled MFU, 0..1
+scan_achieved_tflops            achieved TFLOP/s
+scan_peak_tflops                aggregate published peak TFLOP/s
+scan_output_tokens_per_second   achieved output tokens/sec
+scan_monthly_cost_usd           monthly $ at the configured rate (when a rate is known)
+scan_headroom_monthly_usd_low   envelope low bound $/mo
+scan_headroom_monthly_usd_high  envelope high bound $/mo
+scan_headroom_multiple          how far below the mid healthy band the workload runs
+scan_healthy_mfu_band_low       public 0.35 reference (no label)
+scan_healthy_mfu_band_high      public 0.50 reference (no label)
+```
+
+To put a board in front of it, run the exporter on the GPU host, then:
+
+```
+docker compose -f board-compose.yaml up
+# open http://localhost:3000  (anonymous; the board loads itself)
+```
+
+Prometheus scrapes `scan` at `host.docker.internal:9100` and Grafana auto-loads
+`scan-board.json`: util-vs-MFU gap, the headroom envelope, tok/s, and achieved-vs-peak
+TFLOP/s.
+
 ## Honest by construction
 
 Every number `scan` prints is an **estimate**: MFU is modeled from a published-spec

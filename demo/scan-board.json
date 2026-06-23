@@ -1,0 +1,91 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 3,
+  "title": "scan: the mfu gap",
+  "uid": "scan-mfu-board",
+  "tags": ["ingero", "scan", "mfu"],
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 10, "type": "stat", "title": "",
+      "gridPos": { "h": 2, "w": 7, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "PROM" },
+      "fieldConfig": { "defaults": { "displayName": "Reported GPU utilization (nvidia-smi)", "color": { "mode": "fixed", "fixedColor": "red" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "name", "colorMode": "background", "graphMode": "none", "justifyMode": "center" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "vector(1)", "refId": "A", "instant": true } ]
+    },
+    {
+      "id": 1, "type": "stat", "title": "",
+      "gridPos": { "h": 6, "w": 7, "x": 0, "y": 2 },
+      "datasource": { "type": "prometheus", "uid": "PROM" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1, "color": { "mode": "fixed", "fixedColor": "red" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "scan_gpu_utilization", "refId": "A" } ]
+    },
+    {
+      "id": 11, "type": "text", "title": "",
+      "gridPos": { "h": 8, "w": 1, "x": 7, "y": 0 },
+      "options": { "mode": "markdown", "content": "\n\n\n# vs." }
+    },
+    {
+      "id": 12, "type": "stat", "title": "",
+      "gridPos": { "h": 2, "w": 7, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "PROM" },
+      "fieldConfig": { "defaults": { "displayName": "Measured MFU", "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "name", "colorMode": "background", "graphMode": "none", "justifyMode": "center" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "vector(1)", "refId": "A", "instant": true } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "",
+      "gridPos": { "h": 6, "w": 7, "x": 8, "y": 2 },
+      "datasource": { "type": "prometheus", "uid": "PROM" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1, "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "scan_mfu", "refId": "A" } ]
+    },
+    {
+      "id": 13, "type": "text", "title": "",
+      "gridPos": { "h": 8, "w": 1, "x": 15, "y": 0 },
+      "options": { "mode": "markdown", "content": "\n\n\n# =" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Consolidation headroom / month, USD (envelope)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "PROM" },
+      "fieldConfig": { "defaults": { "unit": "prefix:$", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "green" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name", "colorMode": "value", "graphMode": "none", "orientation": "horizontal" },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "scan_headroom_monthly_usd_low", "legendFormat": "Low", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "scan_headroom_monthly_usd_high", "legendFormat": "High", "refId": "B" }
+      ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Output tokens / sec",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "PROM" },
+      "fieldConfig": { "defaults": { "unit": "locale", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "scan_output_tokens_per_second", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Achieved vs peak TFLOP/s",
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "PROM" },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "drawStyle": "line", "fillOpacity": 12, "lineWidth": 2 } }, "overrides": [ { "matcher": { "id": "byName", "options": "Peak" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } } ] }, { "matcher": { "id": "byName", "options": "Achieved" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "scan_achieved_tflops", "legendFormat": "Achieved", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "PROM" }, "expr": "scan_peak_tflops", "legendFormat": "Peak", "refId": "B" }
+      ]
+    },
+    {
+      "id": 6, "type": "text", "title": "",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 14 },
+      "options": { "mode": "markdown", "content": "scan shows the gap. the Ingero agent attributes the cause, forecasts the SLO-safe recoverable, and signs the receipt." }
+    }
+  ]
+}
