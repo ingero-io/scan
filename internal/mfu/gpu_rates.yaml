@@ -3,7 +3,14 @@
 # BOUND on real exposure (spot, reserved, and committed-use discounts
 # are not modeled). The dollar output is labeled accordingly and
 # `--rate` overrides it with the operator's real contracted rate. GPU
-# keys match the nvidia-smi name; matching is by family token.
+# keys match the vendor-reported name (nvidia-smi on NVIDIA, amd-smi
+# market name on ROCm); matching is by family token.
+#
+# AMD Instinct coverage is deliberately partial: only rates a provider
+# publishes on its own public pricing page are listed. MI325X and MI355X
+# are rented mostly under reservation with no published hourly figure,
+# so they carry no entry and scan asks for --rate instead of printing an
+# invented dollar line.
 currency_name: USD
 currency_symbol: "$"
 
@@ -29,5 +36,8 @@ providers:
     "NVIDIA H100 80GB HBM3": 4.25
     "NVIDIA A100-SXM4-80GB": 2.39
     "NVIDIA L40S": 1.50
+  hotaisle: # published per-GPU rates; 8x bare metal carries a one-month minimum
+    "AMD Instinct MI300X VM": 2.99
+    "AMD Instinct MI300X bare metal": 3.39
 
 fallback_rate: 0.0

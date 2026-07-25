@@ -21,8 +21,10 @@ type ratesCatalog struct {
 // defaultProviderOrder is the lookup order for the single auto rate.
 // ec2 first: recognizable and on the higher end, which is acceptable
 // because the number is explicitly a list-price UPPER BOUND and
-// `--rate` overrides it.
-var defaultProviderOrder = []string{"ec2", "gcp", "azure", "coreweave", "lambda"}
+// `--rate` overrides it. The AMD-only provider sits last so it never
+// shadows a hyperscaler rate for an NVIDIA SKU; it is reached only when
+// no earlier provider lists the family at all.
+var defaultProviderOrder = []string{"ec2", "gcp", "azure", "coreweave", "lambda", "hotaisle"}
 
 func loadBundledRates() (ratesCatalog, error) {
 	var c ratesCatalog

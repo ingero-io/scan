@@ -30,11 +30,13 @@ func renderPrometheus(est mfu.Estimate, rateKnown bool) string {
 		fmt.Fprintf(&b, "%s%s %s\n", name, labels, formatFloat(value))
 	}
 
-	// nvidia-smi utilization (0..1) - the dashboard number. Omitted entirely
-	// when utilization could not be read, rather than published as a fake 0.
+	// Vendor-reported utilization (0..1) - the dashboard number. Omitted
+	// entirely when utilization could not be read, rather than published as a
+	// fake 0. The series name stays vendor-neutral so a dashboard built on an
+	// NVIDIA fleet keeps working when an AMD host reports into it.
 	if est.GPUUtilPct != nil {
 		gauge("scan_gpu_utilization",
-			"live nvidia-smi GPU utilization (0..1), the number the dashboard shows",
+			"live GPU utilization (0..1) as reported by the host's vendor tool, the number the dashboard shows",
 			*est.GPUUtilPct/100)
 	}
 

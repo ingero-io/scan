@@ -35,10 +35,11 @@ MFU. That gap is healthy-server waste you are paying for. (Full recording:
 
 ## Try it in 30 seconds (on a GPU box)
 
-scan needs a real GPU. It reads live `nvidia-smi` utilization and contrasts it
+scan needs a real GPU. It reads live utilization from the host's own vendor tool
+(`nvidia-smi` on NVIDIA, `amd-smi` or `rocm-smi` on AMD/ROCm) and contrasts it
 with the work the GPU is actually doing - there is nothing real to show without
 one, so with no GPU it exits instead of printing numbers you cannot trust. On any
-Linux host with an NVIDIA GPU already serving an engine:
+Linux host with an NVIDIA or AMD GPU already serving an engine:
 
 ```
 curl -sSL https://github.com/ingero-io/scan/releases/latest/download/scan_linux_amd64.tar.gz | tar xz
@@ -105,10 +106,11 @@ go build -o scan ./cmd/scan
 scan --endpoint http://localhost:8000/metrics --model llama-3-70b
 ```
 
-The GPU model and count are detected from `nvidia-smi` (a GPU is required).
-`--gpu` / `--gpu-count` override the label used for the rate and peak tables
-when the detected name is not one scan recognizes; they do not let scan run
-without a GPU. `--rate` sets your real $/GPU-hr:
+The GPU model and count are detected from `nvidia-smi`, or from `amd-smi` with a
+`rocm-smi` fallback on ROCm hosts (a GPU is required). `--gpu` / `--gpu-count`
+override the label used for the rate and peak tables when the detected name is
+not one scan recognizes; they do not let scan run without a GPU. `--rate` sets
+your real $/GPU-hr:
 
 ```
 scan --model mixtral-8x7b --rate 2.49
@@ -171,6 +173,16 @@ TFLOP/s, tokens/sec, the monthly headroom bounds, and the public healthy band).
 `scan` reads output-token throughput from vLLM (and vLLM-compatible servers like
 NIM), SGLang, and TGI. Triton is detected but not supported for scanning: it
 exposes no output-token counter, so there is no way to derive tokens/sec from it.
+
+## GPUs
+
+NVIDIA and AMD Instinct. The peak table carries H100, H200, GH200, B200, A100,
+L40S, L4, A10/A10G, V100, T4, and MI300X, MI325X, MI350X, MI355X, using each
+vendor's published dense BF16/FP16 figures. A GPU whose model is not in the table
+is an error rather than a guess: pass `--gpu` with a name scan recognizes, or
+open an issue and it can be added. The AMD reading is new; if a number looks
+wrong on your ROCm host, the raw `amd-smi metric --json` output in an issue is
+the fastest way to get it fixed.
 
 ## This is an estimate, on purpose
 

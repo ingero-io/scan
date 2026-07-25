@@ -32,14 +32,24 @@ const flopsPerParamPerToken = 2.0
 // monthly cost.
 const hoursPerMonth = 730.0
 
-// gpuPeakTFLOPS is dense (no 2:4 sparsity) BF16/FP16 tensor-core
+// gpuPeakTFLOPS is dense (no 2:4 sparsity) BF16/FP16 tensor
 // throughput in TFLOP/s per GPU, keyed by a distinctive lowercase
 // token found in the GPU model string (e.g. `nvidia-smi
-// --query-gpu=name`). Values are vendor dense-tensor spec, rounded.
-// ESTIMATE: real sustained peak is lower than spec; FP8/INT8 workloads
-// have higher peak than these BF16 numbers, so MFU is conservative
-// (the gap is at least this large) for FP16/BF16 serving and
-// OVERSTATED for FP8 serving. Match is longest-token-first.
+// --query-gpu=name`, or the market name amd-smi reports on a ROCm
+// host). Values are vendor dense-tensor spec, rounded.
+// ESTIMATE: real sustained peak is lower than spec; FP8/INT8/FP4
+// workloads have higher peak than these BF16 numbers, so MFU is
+// conservative (the gap is at least this large) for FP16/BF16 serving
+// and OVERSTATED for low-precision serving, a wider error on the
+// newest parts where FP4 peak is several times the BF16 figure.
+// Match is longest-token-first.
+//
+// AMD rows are AMD's own published dense figures: MI300X and MI325X at
+// 1307.4 TFLOPS FP16/BF16 (same compute, different memory), and the
+// CDNA4 parts at the per-GPU number AMD publishes for the 8-way
+// platform (18.5 PFLOPS dense FP16 on MI350X, 20.1 on MI355X). MI350X
+// and MI355X share a die and differ by cooling and clocks, so they
+// carry different peaks and must not be collapsed.
 var gpuPeakTFLOPS = []struct {
 	token  string
 	tflops float64
@@ -55,6 +65,11 @@ var gpuPeakTFLOPS = []struct {
 	{"l4", 121},   // Ada L4 dense BF16
 	{"v100", 112}, // FP16 tensor (no BF16)
 	{"t4", 65},    // Turing FP16 tensor
+
+	{"mi355x", 2500}, // CDNA4 liquid-cooled 1400W: 2.5 PFLOPS dense FP16/BF16
+	{"mi350x", 2300}, // CDNA4 air-cooled 1000W: 2.3 PFLOPS dense FP16/BF16
+	{"mi325x", 1307}, // CDNA3, 256GB HBM3E: same compute as MI300X
+	{"mi300x", 1307}, // CDNA3, 192GB HBM3: 1307.4 TFLOPS dense FP16/BF16
 }
 
 // init sorts the GPU matching to longest-token-first so a substring
@@ -109,11 +124,16 @@ type Input struct {
 	GPUCount        int
 	TokensPerSec    float64
 	HourlyUSDPerGPU float64
-	// GPUUtilPct is the live nvidia-smi GPU utilization (0..100) observed
-	// over the sampling window - the dashboard number scan contrasts MFU
-	// against. Nil means it could not be read, in which case no utilization
-	// is claimed rather than a fake one printed.
+	// GPUUtilPct is the live vendor-reported GPU utilization (0..100)
+	// observed over the sampling window - the dashboard number scan contrasts
+	// MFU against. Nil means it could not be read, in which case no
+	// utilization is claimed rather than a fake one printed.
 	GPUUtilPct *float64
+	// UtilTool names the tool that produced GPUUtilPct (nvidia-smi on
+	// NVIDIA, amd-smi on ROCm) so the report attributes the number to the
+	// operator's own instrument instead of naming the wrong vendor's tool on
+	// their host. Empty falls back to a vendor-neutral phrase.
+	UtilTool string
 }
 
 // Estimate is the computed MFU gap and its dollar framing. All fields
@@ -129,7 +149,8 @@ type Estimate struct {
 	PeakTFLOPS     float64  // aggregate across GPUCount
 	MFU            float64  // achieved / peak, 0..1 in the normal case
 	Plausible      bool     // false if MFU > 1 (impossible: bad params/throughput/dtype)
-	GPUUtilPct     *float64 // live nvidia-smi utilization 0..100; nil if unread
+	GPUUtilPct     *float64 // live vendor-reported utilization 0..100; nil if unread
+	UtilTool       string   // tool GPUUtilPct came from (nvidia-smi, amd-smi)
 
 	HourlyUSDPerGPU float64
 	MonthlyUSD      float64 // GPUCount * hourly * 730
@@ -232,6 +253,7 @@ func Compute(in Input) (Estimate, error) {
 		MFU:             mfu,
 		Plausible:       mfu <= 1.0,
 		GPUUtilPct:      in.GPUUtilPct,
+		UtilTool:        in.UtilTool,
 		HourlyUSDPerGPU: in.HourlyUSDPerGPU,
 	}
 	// Headroom envelope (MFU-only; independent of rate), anchored to the healthy

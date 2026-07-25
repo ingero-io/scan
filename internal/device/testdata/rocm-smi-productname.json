@@ -1,0 +1,18 @@
+{
+  "card0": {
+    "Card Series": "Instinct MI325X",
+    "Card Model": "0x74a5",
+    "Card Vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+    "Card SKU": "MI3XSRIOV",
+    "Subsystem ID": "0x74a5",
+    "Device Rev": "0x00"
+  },
+  "card1": {
+    "Card Series": "Instinct MI325X",
+    "Card Model": "0x74a5",
+    "Card Vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+    "Card SKU": "MI3XSRIOV",
+    "Subsystem ID": "0x74a5",
+    "Device Rev": "0x00"
+  }
+}

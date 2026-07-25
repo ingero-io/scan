@@ -10,13 +10,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
+	"github.com/ingero-io/scan/internal/device"
 	"github.com/ingero-io/scan/internal/mfu"
 	"github.com/ingero-io/scan/internal/scrape"
 	"github.com/spf13/cobra"
@@ -43,11 +41,13 @@ var rootCmd = &cobra.Command{
 	Long: `scan reads a serving engine's Prometheus /metrics endpoint twice over a
 short window, derives achieved output tokens/sec, and estimates Model FLOPs
 Utilization (MFU) against the GPU's peak: the gap between the utilization your
-dashboard shows (read live from nvidia-smi) and the real work the GPU is doing.
+dashboard shows (read live from nvidia-smi or amd-smi) and the real work the GPU
+is doing.
 
-Requires an NVIDIA GPU - it reads live utilization and exits if none is present.
-Everything it prints is an ESTIMATE (MFU is modeled, not measured). No eBPF,
-no root - it only reads metrics the engine already exposes.
+Runs on NVIDIA and on AMD/ROCm hosts, and needs a GPU: it reads live utilization
+and exits if none is present. Everything it prints is an ESTIMATE (MFU is
+modeled, not measured). No eBPF, no root - it only reads metrics the engine
+already exposes.
 
   scan --endpoint http://localhost:8000/metrics --model llama-3-70b
   scan --model mixtral-8x7b --rate 2.49`,
@@ -72,7 +72,7 @@ func init() {
 
 func main() {
 	// A signal-cancelled context so the long-running --prometheus loop (and any
-	// in-flight nvidia-smi/scrape) stops cleanly on Ctrl-C / SIGTERM. The
+	// in-flight device read or scrape) stops cleanly on Ctrl-C / SIGTERM. The
 	// one-shot path ignores it.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -94,27 +94,28 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// scan is a GPU tool. A real NVIDIA GPU must be present: nvidia-smi is the
-	// evidence the numbers describe a real device, so we require it even when
-	// --gpu/--gpu-count name the model explicitly (those only override the name
-	// and count used for the rate/peak tables; they do not let scan run GPU-less).
-	dn, dc, derr := detectGPU(cmd.Context())
+	// scan is a GPU tool. A real GPU must be present: the vendor tool's own
+	// reading is the evidence the numbers describe a real device, so we require
+	// it even when --gpu/--gpu-count name the model explicitly (those only
+	// override the name and count used for the rate/peak tables; they do not let
+	// scan run GPU-less).
+	dev, derr := device.Detect(cmd.Context())
 	if derr != nil {
-		return fmt.Errorf("no NVIDIA GPU detected (%w)\n  scan measures the live MFU gap on a serving GPU and must run on the GPU host", derr)
+		return fmt.Errorf("no GPU detected (%w)\n  scan measures the live MFU gap on a serving GPU and must run on the GPU host", derr)
 	}
 	gpu, count := flagGPU, flagGPUCount
 	if gpu == "" {
-		gpu = dn
+		gpu = dev.Name
 	}
 	if count == 0 {
-		count = dc
+		count = dev.Count
 	}
 
 	if flagPrometheus != "" {
-		return runPrometheus(cmd, parser, gpu, count)
+		return runPrometheus(cmd, parser, dev.Vendor, gpu, count)
 	}
 
-	est, rateSource, err := sampleEstimate(cmd.Context(), cmd.ErrOrStderr(), parser, gpu, count)
+	est, rateSource, err := sampleEstimate(cmd.Context(), cmd.ErrOrStderr(), parser, dev.Vendor, gpu, count)
 	if err != nil {
 		return err
 	}
@@ -126,7 +127,7 @@ func run(cmd *cobra.Command, args []string) error {
 // the MFU Estimate. It is the single estimate path shared by the one-shot CLI
 // and the Prometheus loop, so the MFU math is never duplicated. rateSource is
 // empty when no rate was available.
-func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, gpu string, count int) (mfu.Estimate, string, error) {
+func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, vendor device.Vendor, gpu string, count int) (mfu.Estimate, string, error) {
 	t0, err := scrapeOutputTokens(ctx, parser, flagEndpoint)
 	if err != nil {
 		return mfu.Estimate{}, "", fmt.Errorf("scrape %s: %w", flagEndpoint, err)
@@ -134,7 +135,7 @@ func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, g
 	fmt.Fprintf(logw, "sampling %s for %s...\n", flagEndpoint, flagInterval)
 	// Wait out the throughput window and, over the same window, poll the live
 	// GPU utilization so the report contrasts MFU against a real reading.
-	util, err := sampleGPUUtil(ctx, flagInterval)
+	util, err := device.SampleBusy(ctx, vendor, flagInterval)
 	if err != nil {
 		return mfu.Estimate{}, "", err
 	}
@@ -164,6 +165,7 @@ func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, g
 	est, err := mfu.Compute(mfu.Input{
 		Model: flagModel, ParamsOverride: flagParams, GPU: gpu, GPUCount: count,
 		TokensPerSec: tps, HourlyUSDPerGPU: rate, GPUUtilPct: utilPtr,
+		UtilTool: vendor.Tool(),
 	})
 	if err != nil {
 		return mfu.Estimate{}, "", err
@@ -176,7 +178,7 @@ func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, g
 // until the command context is cancelled (SIGINT). A transient sample error
 // (engine briefly down, idle) is logged and retried on the next interval rather
 // than killing the exporter.
-func runPrometheus(cmd *cobra.Command, parser scrape.Parser, gpu string, count int) error {
+func runPrometheus(cmd *cobra.Command, parser scrape.Parser, vendor device.Vendor, gpu string, count int) error {
 	ctx := cmd.Context()
 	snap := &snapshot{}
 	srv := serveMetrics(flagPrometheus, snap)
@@ -196,7 +198,7 @@ func runPrometheus(cmd *cobra.Command, parser scrape.Parser, gpu string, count i
 	for {
 		// sampleEstimate blocks for --interval (the sampling window), so the loop
 		// paces itself; no extra sleep is needed.
-		est, rateSource, err := sampleEstimate(ctx, cmd.ErrOrStderr(), parser, gpu, count)
+		est, rateSource, err := sampleEstimate(ctx, cmd.ErrOrStderr(), parser, vendor, gpu, count)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil // cancelled mid-sample: clean exit
@@ -241,120 +243,4 @@ func scrapeOutputTokens(ctx context.Context, parser scrape.Parser, url string) (
 		return 0, err
 	}
 	return mfu.SumOutputTokens(samples), nil
-}
-
-// detectGPU reads the GPU model + count from nvidia-smi. Best-effort;
-// the caller falls back to --gpu / --gpu-count.
-func detectGPU(ctx context.Context) (name string, count int, err error) {
-	cctx, cancel := context.WithTimeout(ctx, nvidiaSmiTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, "nvidia-smi", "--query-gpu=name", "--format=csv,noheader").Output()
-	if err != nil {
-		return "", 0, err
-	}
-	return parseNvidiaSmi(out)
-}
-
-// nvidiaSmiTimeout bounds each nvidia-smi call. scan targets GPUs under load,
-// exactly when a wedged driver can make nvidia-smi hang for many seconds; a
-// hung utilization poll is dropped rather than stalling the sampling window.
-const nvidiaSmiTimeout = 5 * time.Second
-
-// readUtil is the per-snapshot utilization reader sampleGPUUtil polls. It is a
-// package var so tests can stub out the nvidia-smi call and exercise the
-// averaging and zero-sample sentinel paths without a GPU.
-var readUtil = readGPUUtil
-
-// sampleGPUUtil blocks for window, polling nvidia-smi GPU utilization every
-// ~2s, and returns the mean across samples and GPUs (0..100). It returns a
-// negative value if utilization could not be read at all (GPU present but the
-// query is unsupported), so the caller can omit the claim rather than fake one.
-// Honors ctx cancellation.
-func sampleGPUUtil(ctx context.Context, window time.Duration) (float64, error) {
-	const step = 2 * time.Second
-	deadline := time.NewTimer(window)
-	defer deadline.Stop()
-	ticker := time.NewTicker(step)
-	defer ticker.Stop()
-
-	var sum float64
-	var n int
-	take := func() {
-		if u, ok := readUtil(ctx); ok {
-			sum += u
-			n++
-		}
-	}
-	take() // one reading at the window start
-	for {
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-deadline.C:
-			if n == 0 {
-				return -1, nil
-			}
-			return sum / float64(n), nil
-		case <-ticker.C:
-			take()
-		}
-	}
-}
-
-// readGPUUtil takes one nvidia-smi utilization snapshot across all GPUs,
-// bounded by nvidiaSmiTimeout so a hung driver drops the sample instead of
-// stalling the window.
-func readGPUUtil(ctx context.Context) (float64, bool) {
-	cctx, cancel := context.WithTimeout(ctx, nvidiaSmiTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, "nvidia-smi",
-		"--query-gpu=utilization.gpu", "--format=csv,noheader,nounits").Output()
-	if err != nil {
-		return 0, false
-	}
-	return parseGPUUtil(out)
-}
-
-// parseGPUUtil averages the integer utilization percentages nvidia-smi prints
-// (one line per GPU). Factored out of readGPUUtil so it is unit-testable
-// without a GPU.
-func parseGPUUtil(out []byte) (float64, bool) {
-	var sum float64
-	var n int
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		l := strings.TrimSpace(line)
-		if l == "" {
-			continue
-		}
-		v, err := strconv.ParseFloat(l, 64)
-		if err != nil {
-			continue
-		}
-		sum += v
-		n++
-	}
-	if n == 0 {
-		return 0, false
-	}
-	return sum / float64(n), true
-}
-
-// parseNvidiaSmi parses `nvidia-smi --query-gpu=name --format=csv,noheader`
-// output into the first GPU's name and the GPU count. Factored out of
-// detectGPU so it is unit-testable without a GPU.
-func parseNvidiaSmi(out []byte) (name string, count int, err error) {
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		l := strings.TrimSpace(line)
-		if l == "" {
-			continue
-		}
-		if name == "" {
-			name = l
-		}
-		count++
-	}
-	if name == "" {
-		return "", 0, fmt.Errorf("nvidia-smi returned no GPUs")
-	}
-	return name, count, nil
 }

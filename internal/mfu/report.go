@@ -34,14 +34,20 @@ func Render(est Estimate, rateSource string) string {
 	fmt.Fprintf(&b, "  workload : %s on %dx %s\n", est.Model, est.GPUCount, est.GPU)
 	fmt.Fprintf(&b, "  output   : %.0f tokens/sec  ->  %.0f of %.0f TFLOP/s used\n",
 		est.TokensPerSec, est.AchievedTFLOPS, est.PeakTFLOPS)
-	// Contrast MFU against the LIVE utilization scan just read from nvidia-smi -
-	// the dashboard number - not a hardcoded "~100%". When utilization could not
-	// be read, claim nothing rather than fake a figure.
+	// Contrast MFU against the LIVE utilization scan just read from the host's
+	// own vendor tool - the dashboard number - not a hardcoded "~100%". When
+	// utilization could not be read, claim nothing rather than fake a figure.
+	// The tool is named so an operator can reproduce the reading with the
+	// command they already run.
+	utilTool := est.UtilTool
+	if utilTool == "" {
+		utilTool = "vendor-reported"
+	}
 	if est.GPUUtilPct != nil {
-		fmt.Fprintf(&b, "  util     : %.0f%%   (nvidia-smi GPU utilization - what the dashboard shows)\n", *est.GPUUtilPct)
+		fmt.Fprintf(&b, "  util     : %.0f%%   (%s GPU utilization - what the dashboard shows)\n", *est.GPUUtilPct, utilTool)
 		fmt.Fprintf(&b, "  MFU      : %.1f%%   (the real work behind that utilization)\n", est.MFU*100)
 	} else {
-		fmt.Fprintf(&b, "  MFU      : %.1f%%   (nvidia-smi utilization unavailable)\n", est.MFU*100)
+		fmt.Fprintf(&b, "  MFU      : %.1f%%   (%s utilization unavailable)\n", est.MFU*100, utilTool)
 	}
 	// Headroom is shown as a CEILING vs a published healthy-serving band, never
 	// as "$ you will save". The SLO-safe recoverable slice + a signed receipt are
