@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/ingero-io/scan/internal/device"
+	"github.com/ingero-io/scan/internal/enginedetect"
 	"github.com/ingero-io/scan/internal/mfu"
 	"github.com/ingero-io/scan/internal/scrape"
 	"github.com/spf13/cobra"
@@ -107,15 +110,27 @@ func run(cmd *cobra.Command, args []string) error {
 	if gpu == "" {
 		gpu = dev.Name
 	}
+	// The device count multiplies the per-GPU peak, so it asserts the engine owns
+	// every GPU counted. An operator override and the engine's own parallelism
+	// flags both support that assertion; a host-wide enumeration does not, and is
+	// carried through unattributed so the estimate can withhold its dollar claim.
+	attribution := mfu.DevicesUnattributed
+	engineDevices := detectServingDevices(flagEndpoint)
+	switch {
+	case flagGPUCount > 0:
+		attribution = mfu.DevicesOperatorSet
+	case engineDevices > 0:
+		count, attribution = engineDevices, mfu.DevicesEngineDeclared
+	}
 	if count == 0 {
 		count = dev.Count
 	}
 
 	if flagPrometheus != "" {
-		return runPrometheus(cmd, parser, dev.Vendor, gpu, count)
+		return runPrometheus(cmd, parser, dev.Vendor, gpu, count, dev.MIGEnabled, attribution)
 	}
 
-	est, rateSource, err := sampleEstimate(cmd.Context(), cmd.ErrOrStderr(), parser, dev.Vendor, gpu, count)
+	est, rateSource, err := sampleEstimate(cmd.Context(), cmd.ErrOrStderr(), parser, dev.Vendor, gpu, count, dev.MIGEnabled, attribution)
 	if err != nil {
 		return err
 	}
@@ -127,7 +142,7 @@ func run(cmd *cobra.Command, args []string) error {
 // the MFU Estimate. It is the single estimate path shared by the one-shot CLI
 // and the Prometheus loop, so the MFU math is never duplicated. rateSource is
 // empty when no rate was available.
-func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, vendor device.Vendor, gpu string, count int) (mfu.Estimate, string, error) {
+func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, vendor device.Vendor, gpu string, count int, migEnabled bool, attribution mfu.DeviceAttribution) (mfu.Estimate, string, error) {
 	t0, err := scrapeOutputTokens(ctx, parser, flagEndpoint)
 	if err != nil {
 		return mfu.Estimate{}, "", fmt.Errorf("scrape %s: %w", flagEndpoint, err)
@@ -165,7 +180,10 @@ func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, v
 	est, err := mfu.Compute(mfu.Input{
 		Model: flagModel, ParamsOverride: flagParams, GPU: gpu, GPUCount: count,
 		TokensPerSec: tps, HourlyUSDPerGPU: rate, GPUUtilPct: utilPtr,
-		UtilTool: vendor.Tool(),
+		UtilTool:          vendor.Tool(),
+		Precision:         detectServingPrecision(flagEndpoint),
+		DeviceAttribution: attribution,
+		MIGEnabled:        migEnabled,
 	})
 	if err != nil {
 		return mfu.Estimate{}, "", err
@@ -173,12 +191,60 @@ func sampleEstimate(ctx context.Context, logw io.Writer, parser scrape.Parser, v
 	return est, rateSource, nil
 }
 
+// detectServingPrecision reads the precision the serving engine behind endpoint
+// computes in. Its /metrics output carries no dtype or quantization at all, so
+// the serving process's own command line is the only source. Returns an unknown
+// precision when no process matches, which the estimate then labels rather than
+// guesses.
+func detectServingPrecision(endpoint string) mfu.Precision {
+	det, ok := detectServingProcess(endpoint)
+	if !ok {
+		return mfu.PrecisionUnknown
+	}
+	precision, _ := mfu.ResolveComputePrecision(det.Quantization, det.Dtype, det.KVCacheDtype)
+	return precision
+}
+
+// detectServingDevices reads how many GPUs the replica behind endpoint spans,
+// from the engine's own parallelism flags. Returns 0 when that cannot be
+// established, which keeps the device count unattributed rather than asserting
+// a width the command line did not state.
+func detectServingDevices(endpoint string) int {
+	det, ok := detectServingProcess(endpoint)
+	if !ok {
+		return 0
+	}
+	return det.Devices
+}
+
+// detectServingProcess finds the serving process listening on endpoint's port.
+// The port is the join key: matching on "the only engine running" would, on a
+// host serving several replicas, attribute one replica's precision and width to
+// another's throughput, which is worse than not attributing them at all.
+func detectServingProcess(endpoint string) (enginedetect.Detection, bool) {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return enginedetect.Detection{}, false
+	}
+	port, err := strconv.ParseUint(u.Port(), 10, 16)
+	if err != nil || port == 0 {
+		return enginedetect.Detection{}, false
+	}
+	for _, pid := range enginedetect.ListEnginePIDs("") {
+		det, ok := enginedetect.Detect(pid)
+		if ok && det.Port == uint16(port) {
+			return det, true
+		}
+	}
+	return enginedetect.Detection{}, false
+}
+
 // runPrometheus serves the public MFU-gap board on flagPrometheus, re-sampling
 // every --interval into an atomic snapshot the /metrics handler reads. It loops
 // until the command context is cancelled (SIGINT). A transient sample error
 // (engine briefly down, idle) is logged and retried on the next interval rather
 // than killing the exporter.
-func runPrometheus(cmd *cobra.Command, parser scrape.Parser, vendor device.Vendor, gpu string, count int) error {
+func runPrometheus(cmd *cobra.Command, parser scrape.Parser, vendor device.Vendor, gpu string, count int, migEnabled bool, attribution mfu.DeviceAttribution) error {
 	ctx := cmd.Context()
 	snap := &snapshot{}
 	srv := serveMetrics(flagPrometheus, snap)
@@ -198,7 +264,7 @@ func runPrometheus(cmd *cobra.Command, parser scrape.Parser, vendor device.Vendo
 	for {
 		// sampleEstimate blocks for --interval (the sampling window), so the loop
 		// paces itself; no extra sleep is needed.
-		est, rateSource, err := sampleEstimate(ctx, cmd.ErrOrStderr(), parser, vendor, gpu, count)
+		est, rateSource, err := sampleEstimate(ctx, cmd.ErrOrStderr(), parser, vendor, gpu, count, migEnabled, attribution)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil // cancelled mid-sample: clean exit

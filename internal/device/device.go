@@ -51,6 +51,13 @@ type Info struct {
 	Vendor Vendor
 	Name   string
 	Count  int
+
+	// MIGEnabled reports that at least one visible device is partitioned into
+	// MIG instances. It matters because the enumeration above returns one row
+	// per PHYSICAL GPU even under MIG, so Count describes whole boards while a
+	// MIG-confined engine holds only a slice of one. Consumers must not
+	// multiply a whole-board peak by Count on such a host.
+	MIGEnabled bool
 }
 
 // toolTimeout bounds every vendor CLI call. The meter targets GPUs under load,

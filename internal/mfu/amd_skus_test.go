@@ -19,7 +19,7 @@ func TestResolvePeakTFLOPS_AMDInstinct(t *testing.T) {
 		{"Instinct MI350X", 2300},
 		{"Instinct MI355X", 2500},
 	} {
-		got, err := ResolvePeakTFLOPS(tc.name)
+		got, _, err := ResolvePeakTFLOPS(tc.name, PrecisionBF16)
 		if err != nil {
 			t.Errorf("%s: %v", tc.name, err)
 			continue
@@ -33,11 +33,11 @@ func TestResolvePeakTFLOPS_AMDInstinct(t *testing.T) {
 // MI350X and MI355X share a die but not a clock, so collapsing them would put a
 // 9% error straight into the MFU denominator on a CDNA4 fleet.
 func TestResolvePeakTFLOPS_CDNA4PartsAreNotCollapsed(t *testing.T) {
-	air, err := ResolvePeakTFLOPS("Instinct MI350X")
+	air, _, err := ResolvePeakTFLOPS("Instinct MI350X", PrecisionBF16)
 	if err != nil {
 		t.Fatal(err)
 	}
-	liquid, err := ResolvePeakTFLOPS("Instinct MI355X")
+	liquid, _, err := ResolvePeakTFLOPS("Instinct MI355X", PrecisionBF16)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestResolvePeakTFLOPS_UnlistedInstinctPartErrors(t *testing.T) {
 	// The APU and older Instinct parts are deliberately absent: a GPU with no
 	// verified published peak must fail loudly rather than borrow a neighbour's
 	// number and quietly mis-scale every MFU on that host.
-	if _, err := ResolvePeakTFLOPS("Instinct MI300A"); err == nil {
+	if _, _, err := ResolvePeakTFLOPS("Instinct MI300A", PrecisionBF16); err == nil {
 		t.Error("want an error for an Instinct part with no peak-table entry")
 	}
 }
