@@ -74,6 +74,24 @@ type Detection struct {
 	Engine Engine
 	Port   uint16
 	Model  string
+
+	// Quantization, Dtype and KVCacheDtype are the precision-determining
+	// flags read verbatim off the command line, empty when the flag was
+	// not passed. They are reported RAW rather than resolved here:
+	// mapping a quantization scheme to the precision the matmuls run in
+	// is a judgement (weight-only schemes dequantize before the GEMM and
+	// do not change compute precision), and it belongs with the peak
+	// tables that consume it. The engine's own metrics endpoint carries
+	// none of this, so the command line is the only place to read it.
+	Quantization string
+	Dtype        string
+	KVCacheDtype string
+
+	// Devices is the number of GPUs this replica spans, from the engine's
+	// own parallelism flags. 0 means the flags were absent and the width
+	// is unknown, which is NOT the same as 1: a caller must not silently
+	// treat an unknown width as a single GPU, nor as the whole host.
+	Devices int
 }
 
 // readCmdlineArgs reads /proc/[pid]/cmdline, splits on the NUL
@@ -187,6 +205,8 @@ func detectAt(procPath string, pid uint32) (Detection, bool) {
 
 	det.Port = extractPort(args, det.Engine)
 	det.Model = extractModel(args, det.Engine)
+	det.Quantization, det.Dtype, det.KVCacheDtype = extractPrecisionFlags(args, det.Engine)
+	det.Devices = extractDevices(args, det.Engine)
 	return det, true
 }
 
@@ -255,6 +275,84 @@ func extractModel(args []string, engine Engine) string {
 		// model identifier. Skip.
 		return ""
 	}
+	for i, a := range args {
+		for _, k := range keys {
+			if strings.HasPrefix(a, k+"=") {
+				return a[len(k)+1:]
+			}
+			if a == k && i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+	}
+	return ""
+}
+
+// extractPrecisionFlags pulls the flags that determine what precision the
+// engine's matmuls and its KV cache use. Values are returned verbatim; see
+// Detection for why they are not resolved to a precision here.
+func extractPrecisionFlags(args []string, engine Engine) (quantization, dtype, kvCacheDtype string) {
+	quantKeys := []string{"--quantization", "-q"}
+	if engine == TGI {
+		// TGI spells the same concept --quantize.
+		quantKeys = []string{"--quantize"}
+	}
+	quantization = extractFlagValue(args, quantKeys)
+	dtype = extractFlagValue(args, []string{"--dtype"})
+	kvCacheDtype = extractFlagValue(args, []string{"--kv-cache-dtype"})
+	return quantization, dtype, kvCacheDtype
+}
+
+// extractDevices computes how many GPUs the replica spans from the engine's
+// parallelism flags. Returns 0 when no width flag is present.
+//
+// The widths MULTIPLY: a vLLM server at tensor-parallel 2 and pipeline-parallel 2
+// holds four GPUs. SGLang's data-parallel replicas are served behind one metrics
+// endpoint, so its data-parallel size multiplies the tensor-parallel size for the
+// purpose of attributing devices to the scraped endpoint.
+func extractDevices(args []string, engine Engine) int {
+	var widths [][]string
+	switch engine {
+	case VLLM:
+		widths = [][]string{
+			{"--tensor-parallel-size", "-tp"},
+			{"--pipeline-parallel-size", "-pp"},
+		}
+	case SGLang:
+		widths = [][]string{
+			{"--tp-size", "--tp"},
+			{"--dp-size", "--dp"},
+		}
+	case TGI:
+		// TGI shards one model across --num-shard GPUs; it has no second axis.
+		widths = [][]string{{"--num-shard"}}
+	default:
+		return 0
+	}
+
+	devices := 0
+	for _, keys := range widths {
+		v := extractFlagValue(args, keys)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n <= 0 {
+			continue
+		}
+		if devices == 0 {
+			devices = n
+			continue
+		}
+		devices *= n
+	}
+	return devices
+}
+
+// extractFlagValue returns the value of the first of keys present in args,
+// accepting both the "--key=value" and "--key value" spellings. Empty when no
+// key matches or the flag is present with no following value.
+func extractFlagValue(args []string, keys []string) string {
 	for i, a := range args {
 		for _, k := range keys {
 			if strings.HasPrefix(a, k+"=") {

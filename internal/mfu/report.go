@@ -24,6 +24,15 @@ func ParserFor(engine string) (scrape.Parser, error) {
 	}
 }
 
+// assumedSuffix marks a denominator that was defaulted rather than detected,
+// so the estimate line distinguishes a measured divisor from a guessed one.
+func assumedSuffix(est Estimate) string {
+	if est.PrecisionAssumed {
+		return ", assumed - serving precision not detected"
+	}
+	return ""
+}
+
 // Render formats an Estimate as a human-readable report. rateSource
 // describes where the hourly rate came from (e.g. "ec2 list price" or
 // "--rate"); empty when no rate was available, in which case the
@@ -67,12 +76,23 @@ func Render(est Estimate, rateSource string) string {
 			src = " (" + src + ", upper bound)"
 		}
 		fmt.Fprintf(&b, "  cost     : ~$%.0f/mo at $%.2f/GPU/hr%s\n", est.MonthlyUSD, est.HourlyUSDPerGPU, src)
-		if showHeadroom && est.MonthlyHeadroomHighUSD > 0 {
+		switch {
+		case est.DollarEnvelopeSuppressed:
+			// Say the figure is being withheld and why. Printing nothing here
+			// would read as "no headroom found", a different and wrong claim.
+			fmt.Fprintln(&b, "  envelope : withheld - the GPU count behind this MFU was not attributed to")
+			fmt.Fprintln(&b, "             this engine, and a dollar figure would imply a confidence the")
+			fmt.Fprintln(&b, "             input does not support")
+		case showHeadroom && est.MonthlyHeadroomHighUSD > 0:
 			fmt.Fprintf(&b, "  envelope : up to ~$%.0f-$%.0f/mo of consolidation headroom (CEILING, not a promise)\n",
 				est.MonthlyHeadroomLowUSD, est.MonthlyHeadroomHighUSD)
 		}
 	}
-	fmt.Fprintln(&b, "\n  Estimate: MFU is modeled (2 FLOPs/param/token, dense BF16 peak), not")
+	// Name the divisor that was actually used. "dense BF16 peak" was printed
+	// unconditionally here even when the workload served in a lower precision,
+	// which described the wrong arithmetic to the reader.
+	fmt.Fprintf(&b, "\n  Estimate: MFU is modeled (2 FLOPs/param/token, dense %s peak%s), not\n",
+		strings.ToUpper(est.Precision.String()), assumedSuffix(est))
 	fmt.Fprintln(&b, "  measured. Pass --rate <usd/hr> for your real GPU cost.")
 	for _, c := range est.Caveats {
 		fmt.Fprintf(&b, "  - %s\n", c)

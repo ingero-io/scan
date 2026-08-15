@@ -37,6 +37,9 @@ func TestCompute_CostAndHeadroom(t *testing.T) {
 	est, err := Compute(Input{
 		Model: "llama-3-70b", GPU: "NVIDIA H100 80GB HBM3", GPUCount: 8,
 		TokensPerSec: 8000, HourlyUSDPerGPU: 2.49,
+		// Engine-declared devices so the dollar envelope is computed rather than
+		// withheld; the withholding rule is asserted separately.
+		DeviceAttribution: DevicesEngineDeclared,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -151,13 +154,18 @@ func TestResolvePeakTFLOPS_NameVariants(t *testing.T) {
 		"NVIDIA H100 80GB HBM3": 989,
 		"NVIDIA A100-SXM4-80GB": 312,
 		"NVIDIA A100-SXM4-40GB": 312,
-		"NVIDIA L40S":           362,
+		"NVIDIA L40S":           362.05,
 		"NVIDIA L4 24GB":        121,
 		"NVIDIA GH200 480GB":    989,
-		"Tesla V100-SXM2-16GB":  112,
+		// V100 resolves per form factor. SXM2 is 125 and PCIe is 112, a 10.4%
+		// spread that used to land entirely in the denominator because one row
+		// carried the PCIe figure and matched both names.
+		"Tesla V100-SXM2-16GB": 125,
+		"Tesla V100-PCIE-16GB": 112,
+		"NVIDIA H100 PCIe":     756,
 	}
 	for name, want := range cases {
-		got, err := ResolvePeakTFLOPS(name)
+		got, _, err := ResolvePeakTFLOPS(name, PrecisionBF16)
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue

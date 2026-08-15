@@ -20,6 +20,9 @@ func TestRender_IncludesGapAndDollar(t *testing.T) {
 	est, err := Compute(Input{
 		Model: "llama-3-70b", GPU: "NVIDIA H100 80GB HBM3", GPUCount: 8,
 		TokensPerSec: 8000, HourlyUSDPerGPU: 12.29,
+		// Engine-declared devices, so the envelope renders rather than being
+		// withheld; the withheld rendering is asserted separately.
+		DeviceAttribution: DevicesEngineDeclared,
 	})
 	if err != nil {
 		t.Fatal(err)
